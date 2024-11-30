@@ -21,7 +21,10 @@ def compute_contact_label(feet, thr=1e-2, alpha=5):
 
 
 class Network(nn.Module):
-    def __init__(self, cfg) :
+    def __init__(self, 
+                 batch_size,
+                 seqlen,
+                 device) :
         super().__init__()
         num_joints = 17
         # input_dict
@@ -35,8 +38,8 @@ class Network(nn.Module):
 
         self.local_orient_type = '6d'
 
-        smpl_batch_size = cfg.TRAIN.BATCH_SIZE * cfg.DATASET.SEQLEN
-        self.smpl = build_body_model(cfg.DEVICE, smpl_batch_size)
+        smpl_batch_size = batch_size * seqlen
+        self.smpl = build_body_model(device, smpl_batch_size)
 
         # 
         self.encoder = Encoder(input_emb_width=input_dim, output_emb_width = 512, down_t = 3,
