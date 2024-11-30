@@ -4,7 +4,6 @@ from .layers import Encoder, Decoder
 from .head import OutHead
 from .codebook import QuantizeEMAReset
 from .smpl import SMPL
-from .vq_traj import Network
 
 def build_body_model(device, batch_size=1, gender='neutral', **kwargs):
     sys.stdout = open(os.devnull, 'w')
@@ -17,4 +16,5 @@ def build_body_model(device, batch_size=1, gender='neutral', **kwargs):
     return body_model
 
 def build_network(cfg):
+    from .vq_traj import Network
     return
