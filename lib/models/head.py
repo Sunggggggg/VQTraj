@@ -17,7 +17,7 @@ class OutHead(nn.Module):
         """
         decoded_feat : [T, B, dim]
         """
-        x = self.fc_layer(batch['decoded_feat'])
+        x = self.fc_layer(batch['decoded_feat'].unsqueeze(-2))
         out = self.output_head(x)
 
         d_xy = out[..., :2]

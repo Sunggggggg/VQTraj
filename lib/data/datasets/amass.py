@@ -30,6 +30,10 @@ class AMASSDataset(BaseDataset):
 
         self.prepare_video_batch()
     
+    @property
+    def __name__(self, ):
+        return 'AMASS'
+    
     def generate_mask(self, target):
         """
         visble = True, 
@@ -45,13 +49,13 @@ class AMASSDataset(BaseDataset):
         start_index, end_index = self.video_indices[index]
         
         # Load AMASS labels
-        pose = torch.from_numpy(self.labels['pose'][start_index:end_index+1].copy())
+        pose = torch.from_numpy(self.labels['pose'][start_index:end_index].copy())
         pose = transforms.axis_angle_to_matrix(pose.reshape(-1, 24, 3))
         root_orient = pose[:, :1]   # [T, 1, 3, 3]
         body_pose = pose[:, 1:]     # [T, 23, 3, 3]
 
-        transl = torch.from_numpy(self.labels['transl'][start_index:end_index+1].copy())
-        betas = torch.from_numpy(self.labels['betas'][start_index:end_index+1].copy())
+        transl = torch.from_numpy(self.labels['transl'][start_index:end_index].copy())
+        betas = torch.from_numpy(self.labels['betas'][start_index:end_index].copy())
         
         # Stack GT
         target.update({'vid': self.labels['vid'][start_index], 

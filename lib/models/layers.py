@@ -22,7 +22,7 @@ class Encoder(nn.Module):
         for i in range(down_t):
             input_dim = width
             block = nn.Sequential(
-                nn.Conv1d(input_dim, width, filter_t, stride_t, pad_t),
+                nn.Conv1d(input_dim, width, 3, 1, 1),
                 Resnet1D(width, depth, dilation_growth_rate, activation=activation, norm=norm),
             )
             blocks.append(block)
@@ -62,7 +62,7 @@ class Decoder(nn.Module):
             out_dim = width
             block = nn.Sequential(
                 Resnet1D(width, depth, dilation_growth_rate, reverse_dilation=True, activation=activation, norm=norm),
-                nn.Upsample(scale_factor=2, mode='nearest'),
+                # nn.Upsample(scale_factor=2, mode='nearest'),
                 nn.Conv1d(width, out_dim, 3, 1, 1)
             )
             blocks.append(block)
