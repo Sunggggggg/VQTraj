@@ -31,12 +31,12 @@ class Encoder(nn.Module):
 
     def preproces(self, x):
         """
-        x : [T, B, dim]
+        x : [T, B, dim] +> [B, dim, T]
         """
         return x.permute(1, 2, 0)
 
     def forward(self, batch):
-        x = batch['input']
+        x = batch['input_tp']
         x = self.preproces(x)
         batch['encoded_feat'] = self.model(x)
         return batch
@@ -71,6 +71,14 @@ class Decoder(nn.Module):
         blocks.append(nn.Conv1d(width, input_emb_width, 3, 1, 1))
         self.model = nn.Sequential(*blocks)
 
+    def post_process(self, x):
+        """
+        x : [B, dim, T] => [T, B, dim]
+        """
+        return x.permute(2, 0, 1)
+
     def forward(self, batch):
-        batch['decoded_feat'] = self.model(batch['quantized_feat'])
+        x = self.model(batch['quantized_feat'])  # [B, dim, T]
+        x = self.post_process(x)
+        batch['decoded_feat'] = x 
         return batch

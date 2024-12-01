@@ -3,8 +3,8 @@ import torch
 import torch.nn as nn
 import joblib
 from lib.utils import transforms
-from lib.dataset._dataset import BaseDataset
-from lib.dataset.utils.augmentor import *
+from lib.data._dataset import BaseDataset
+from lib.data.utils.augmentor import *
 
 from configs import constants as _C
 
@@ -27,6 +27,8 @@ class AMASSDataset(BaseDataset):
 
         self.labels = joblib.load(label_pth)
         self.SMPLAugmentor = SMPLAugmentor(cfg)
+
+        self.prepare_video_batch()
     
     def generate_mask(self, target):
         """

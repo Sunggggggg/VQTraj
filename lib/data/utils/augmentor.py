@@ -80,25 +80,19 @@ class SMPLAugmentor():
 
     def __call__(self, target):
         if not self.augment:
-            # Only add initial frame augmentation
-            if not 'init_pose' in target:
-                target['init_pose'] = target['pose'][:1] @ self.get_initial_pose_augmentation()
             return target
 
-        n_frames = target['pose'].shape[0]
+        n_frames = target['body_pose'].shape[0]
 
         # Global rotation
         rmat = self.get_global_augmentation()
-        target['pose'][:, 0] = rmat @ target['pose'][:, 0]
-        target['transl'] = (rmat.squeeze() @ target['transl'].T).T
+        target['w_root_orient'][:, 0] = rmat @ target['w_root_orient'][:, 0]
+        target['w_transl'] = (rmat.squeeze() @ target['w_transl'].T).T
 
         # Shape
         shape_noise = self.get_shape_augmentation(n_frames)
         target['betas'] = target['betas'] + shape_noise
-
-        # Initial frames mis-prediction
-        target['init_pose'] = target['pose'][:1] @ self.get_initial_pose_augmentation()
-
+        
         return target
 
     def get_global_augmentation(self, ):

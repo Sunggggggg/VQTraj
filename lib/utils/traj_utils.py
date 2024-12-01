@@ -60,7 +60,7 @@ def traj_global2local_heading(trans, orient_q, base_orient=[0.5, 0.5, 0.5, 0.5],
     d_heading = torch.cat([heading[[0]], d_heading])    # first element is global heading
     d_heading_vec = heading_to_vec(d_heading)
     d_xy_yawcoord = rot_2d(d_xy, -heading[:-1])
-    d_xy_yawcoord = torch.cat([xy[[0]], d_xy_yawcoord])     # first element is global trans xy
+    d_xy_yawcoord = torch.cat([xy[[0]], d_xy_yawcoord])
     local_traj = torch.cat([d_xy_yawcoord[..., :2], z.unsqueeze(-1), local_orient, d_heading_vec], dim=-1)  # dim: 3 + 6 + 2 = 11
     return local_traj
 

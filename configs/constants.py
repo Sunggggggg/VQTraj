@@ -10,7 +10,7 @@ IMG_FEAT_DIM = {
 }
 
 N_JOINTS = 17
-root = 'dataset'
+root = '/mnt2/SKY/WHAM/dataset'
 class PATHS:
     # Raw data folders
     PARSED_DATA = f'{root}/parsed_data'
