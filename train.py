@@ -7,8 +7,8 @@ from configs.config import parse_args
 from lib.utils.train_utils import get_optimizer, create_logger, prepare_output_dir
 from lib.data.datasets.amass import AMASSDataset
 from lib.data.datasets.dataset_eval import EvalDataset
-#from lib.models.vq_traj import Network
-from lib.models.clip_vq_traj import Network
+from lib.models.vq_traj import Network
+#from lib.models.clip_vq_traj import Network
 #from lib.models.TransVQTraj.trans_vq_traj import TransNetwork as Network
 from lib.core.loss import TrajLoss
 from lib.core.trainer import Trainer

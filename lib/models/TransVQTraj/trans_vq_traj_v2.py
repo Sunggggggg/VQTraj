@@ -38,21 +38,21 @@ class TransNetwork(nn.Module):
         # Input 1. Body pose
         if 'body_pose' in data :
             body_pose_tp = batch['body_pose'].transpose(0, 1).contiguous()
-            body_pose_6d_tp = transforms.matrix_to_rotation_6d(body_pose_tp)
             body_pose_aa_tp = transforms.matrix_to_axis_angle(body_pose_tp)
+
             batch['body_pose_aa_tp'] = body_pose_aa_tp.reshape(body_pose_aa_tp.shape[:2] + (-1,))   # [T, B, 69]
 
         # Input 2. Keypoints (C)
         if 'c_kp3d' in data :
             c_kp3d = data['c_kp3d']
             c_kp3d_tp = c_kp3d.transpose(0, 1).contiguous()
-            c_vel_kp3d_tp = (c_kp3d_tp[1:] - c_kp3d_tp[:-1])
+            c_vel_kp3d_tp = (c_kp3d_tp[1:] - c_kp3d_tp[:-1]) * 30
             c_vel_kp3d_tp = torch.cat([torch.zeros_like(c_vel_kp3d_tp[:1]), c_vel_kp3d_tp], dim=0) 
 
             batch['c_kp3d_tp'] = c_kp3d_tp.reshape(c_kp3d_tp.shape[:2] + (-1,))                     # [T, B, 51]
-            batch['c_vel_kp3d_tp'] = c_vel_kp3d_tp.reshape(c_vel_kp3d_tp.shape[:2] + (-1,))         #  ''
+            batch['c_vel_kp3d_tp'] = c_vel_kp3d_tp.reshape(c_vel_kp3d_tp.shape[:2] + (-1,))         # 
 
-        # Input 3. Trans, Rotation
+        # Input 3. (Option) Trans, Rotation
         if 'w_transl' in data :
             w_orient_rotmat = data['w_root_orient']         # [B, T, 1, 3, 3]
             w_transl = data['w_transl'].unsqueeze(-2)       # [B, T, 1, 3]
@@ -92,8 +92,6 @@ class TransNetwork(nn.Module):
         c_root = torch.zeros_like(w_root)
         c_transl = torch.zeros_like(w_transl)
         
-        #w_output = self.smpl(body_pose=rotmat, global_orient=w_root, 
-        #                     transl=w_transl, betas=betas, pose2rot=False)
         c_output = self.smpl(body_pose=rotmat, global_orient=c_root, 
                              transl=c_transl, betas=betas, pose2rot=False)
         

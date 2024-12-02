@@ -18,6 +18,8 @@ class TrajLoss(nn.Module):
         pred    : [T, B, 1, 3]
         gt      : [T, B, 1, 3] init frame [0,0,0]
         """
+        pred = pred - pred[:1]
+        gt = gt - gt[:1]
         return self.l2_loss(pred, gt)
 
     def compute_orient_angle_loss(self, pred, gt):

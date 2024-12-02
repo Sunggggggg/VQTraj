@@ -26,7 +26,7 @@ class MLPBlock(nn.Module):
             nn.Linear(dim, inter_dim),
             nn.GELU(),
             nn.Dropout(dropout_ratio),
-            nn.Linear(inter_dim, dim),
+            nn.Linear(inter_dim, out_dim),
             nn.Dropout(dropout_ratio)
         )
 
@@ -309,9 +309,9 @@ class ContextEncoder(nn.Module):
         """
         x : [T, B, dim]
         """
-        x = torch.cat((batch[k] for k in self.input_dict), dim=-1)
+        x = torch.cat([batch[k] for k in self.input_dict], dim=-1)
 
-        x = self.input_embed(x)
+        x = self.input_layer(x)
         for net in self.temporal_net :
             x = net(x)
         

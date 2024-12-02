@@ -6,6 +6,7 @@ from lib.utils import transforms
 from lib.utils.print_utils import count_param
 from lib.utils.traj_utils import traj_global2local_heading, traj_local2global_heading
 from lib.models import Encoder, Decoder, QuantizeEMAReset, OutHead
+from lib.models.layers import ContextEncoder
 from smplx import SMPL
 
 def compute_contact_label(feet, thr=1e-2, alpha=5):
@@ -29,10 +30,10 @@ class Network(nn.Module):
         num_joints = 17
         # input_dict
         self.input_dict = {
-            "body_pose_6d_tp": 23*3,
+            "body_pose_aa_tp": 23*3,
             # "w_orient_6d_tp": 6,
-            "w_kp3d_tp": num_joints*3,
-            "w_vel_kp3d_tp": num_joints*3,
+            "c_kp3d_tp": num_joints*3,
+            "c_vel_kp3d_tp": num_joints*3,
         }
         input_dim = sum([v for v in self.input_dict.values()])
 
@@ -49,6 +50,7 @@ class Network(nn.Module):
         num_tokens = 64
         #down_t = 3
         # 
+        self.context_encoder = ContextEncoder(hid_dim=512, out_dim=512)
         self.encoder = Encoder(num_tokens=num_tokens, input_emb_width=input_dim, output_emb_width = 256, down_t = down_t,
                  stride_t = 2, width = 512, depth = depth, dilation_growth_rate = 3, activation='relu', norm=None)
         self.decoder = Decoder(num_tokens=num_tokens, input_emb_width = 256, output_emb_width = 256, down_t = down_t, 
@@ -112,8 +114,13 @@ class Network(nn.Module):
         local_orient = batch['local_orient']
         d_heading_vec = batch['d_heading_vec']
         
-        init_xy = torch.zeros_like(batch['local_traj_tp'][:1, ..., :2])    # [1, B, 2]
-        init_heading_vec = torch.tensor([0., 1.], device=init_xy.device).expand_as(batch['local_traj_tp'][:1, ..., -2:])
+        if 'local_traj_tp' in batch:
+            init_xy = batch['local_traj_tp'][:1, ..., :2]
+            init_heading_vec = batch['local_traj_tp'][:1, ..., -2:]
+        else :
+            init_xy = torch.zeros_like(batch['local_traj_tp'][:1, ..., :2])    # [1, B, 2]
+            init_heading_vec = torch.tensor([0., 1.], device=init_xy.device).expand_as(batch['local_traj_tp'][:1, ..., -2:])
+        
         d_xy = torch.cat([init_xy, d_xy[1:, ..., :2]], dim=0)                              # [T, B, 2]
         d_heading_vec = torch.cat([init_heading_vec, d_heading_vec[1:, ..., -2:]], dim=0)  # [T, B, 2]
 
@@ -139,8 +146,6 @@ class Network(nn.Module):
         c_root = torch.zeros_like(w_root)
         c_transl = torch.zeros_like(w_transl)
         
-        #w_output = self.smpl(body_pose=rotmat, global_orient=w_root, 
-        #                     transl=w_transl, betas=betas, pose2rot=False)
         c_output = self.smpl(body_pose=rotmat, global_orient=c_root, 
                              transl=c_transl, betas=betas, pose2rot=False)
         
@@ -159,6 +164,7 @@ class Network(nn.Module):
         return batch
 
     def forward_model(self, batch):
+        batch = self.context_encoder(batch) # 'context' : [T, B, dim]
         batch = self.encoder(batch)
         x_d, commit_loss, perplexity = self.codebook(batch['encoded_feat'])  # [B, dim, T]
         batch['quantized_feat'] = x_d

@@ -5,10 +5,10 @@ import numpy as np
 
 from configs.config import parse_args
 from lib.utils.train_utils import prepare_batch
-from lib.utils.print_utils import count_param
+from lib.utils.print_utils import count_param, print_batch
 from lib.data.datasets.dataset_eval import EvalDataset
-from lib.models.clip_vq_traj import Network
-#from lib.models.vq_traj import Network
+#from lib.models.clip_vq_traj import Network
+from lib.models.vq_traj import Network
 
 
 def main(cfg):
@@ -29,6 +29,8 @@ def main(cfg):
         for i, batch in enumerate(eval_dataloader):
             batch = prepare_batch(batch)
             pred = network(batch)
+
+            print_batch(pred)
             
             pred_traj = pred['out_trans_tp'][:, 0].detach().cpu().numpy()
             target_traj = pred['w_transl_tp'][:, 0].detach().cpu().numpy()
