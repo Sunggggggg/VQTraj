@@ -13,12 +13,12 @@ class OutHead(nn.Module):
 
         self.output_head = nn.Linear(dim_list[-1], out_dim)
 
-    def forward(self, batch):
+    def forward(self, batch, return_dict=False):
         """
         decoded_feat : [T, B, dim]
         """
         x = self.fc_layer(batch['decoded_feat'].unsqueeze(-2))
-        out = self.output_head(x)
+        out = self.output_head(x)   # [B]
 
         d_xy = out[..., :2]
         z = out[..., 2:3]
@@ -30,4 +30,7 @@ class OutHead(nn.Module):
         batch['local_orient'] = local_orient
         batch['d_heading_vec'] = d_heading_vec
         
-        return batch
+        if return_dict :
+            return batch
+        else :
+            return out

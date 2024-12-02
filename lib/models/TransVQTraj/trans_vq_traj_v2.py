@@ -1,65 +1,38 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from configs import constants as _C
+from lib.models.TransVQTraj import config as _C
+from configs import constants
+from ..codebook import QuantizeEMAReset
+from ..layers import ContextEncoder, TrajEncoder, TrajDecoder
+from .rotation_conversions import *
 from lib.utils import transforms
-from lib.utils.print_utils import count_param
 from lib.utils.traj_utils import traj_global2local_heading, traj_local2global_heading
-from lib.models import Encoder, Decoder, QuantizeEMAReset, OutHead
 from smplx import SMPL
 
-def compute_contact_label(feet, thr=1e-2, alpha=5):
-    """
-    feet : [B, T, 4, 3]
-    """
-    vel = torch.zeros_like(feet[..., 0])
-    label = torch.zeros_like(feet[..., 0])
-    
-    vel[:, 1:-1] = (feet[:, 2:] - feet[:, :-2]).norm(dim=-1) / 2.0
-    vel[:, 0] = vel[:, 1].clone()
-    vel[:, -1] = vel[:, -2].clone()
-    
-    label = 1 / (1 + torch.exp(alpha * (thr ** -1) * (vel - thr)))
-    return label
+def model_freeze(model):
+    for param in model.parameters() :
+        param.requires_grad = False
+    return model
 
-
-class Network(nn.Module):
-    def __init__(self, cfg) :
+class TransNetwork(nn.Module):
+    def __init__(self, cfg, codebook_train=True) :
         super().__init__()
         num_joints = 17
-        # input_dict
-        self.input_dict = {
-            "body_pose_6d_tp": 23*3,
-            # "w_orient_6d_tp": 6,
-            "w_kp3d_tp": num_joints*3,
-            "w_vel_kp3d_tp": num_joints*3,
-        }
-        input_dim = sum([v for v in self.input_dict.values()])
-
         self.local_orient_type = '6d'
 
-        smpl_batch_size = cfg.TRAIN.BATCH_SIZE * cfg.DATASET.SEQLEN
-        self.smpl = SMPL(_C.BMODEL.FLDR, num_betas=10, ext='pkl')
-        J_regressor_wham = np.load(_C.BMODEL.JOINTS_REGRESSOR_WHAM)
+        # Body model
+        self.smpl= SMPL(constants.BMODEL.FLDR, num_betas=10, ext='pkl')
+        J_regressor_wham = np.load(constants.BMODEL.JOINTS_REGRESSOR_WHAM)
         self.register_buffer('J_regressor_wham', torch.tensor(
             J_regressor_wham, dtype=torch.float32))
         
-        depth = 3
-        down_t = 2
-        num_tokens = 64
-        #down_t = 3
-        # 
-        self.encoder = Encoder(num_tokens=num_tokens, input_emb_width=input_dim, output_emb_width = 256, down_t = down_t,
-                 stride_t = 2, width = 512, depth = depth, dilation_growth_rate = 3, activation='relu', norm=None)
-        self.decoder = Decoder(num_tokens=num_tokens, input_emb_width = 256, output_emb_width = 256, down_t = down_t, 
-                               stride_t = 2, width = 512, depth = depth, dilation_growth_rate = 3, activation='relu', norm=None)
-        
-        self.codebook = QuantizeEMAReset(nb_code=512, code_dim=256)
-        self.head = OutHead(in_dim=256, hid_dims=[256, 128], out_dim=11)
-
-        print(f">> Input dimension : {input_dim}")
-        print(f"# of weight : {count_param(self)}")
-
+        # Model
+        self.context_encoder = ContextEncoder(hid_dim=512, out_dim=512)
+        self.encoder = TrajEncoder(con_dim=512, hid_dim=256, out_dim=_C.CODEBOOK.code_dim)
+        self.decoder = TrajDecoder(in_dim=_C.CODEBOOK.code_dim, hid_dim=256, num_tokens=self.encoder.token_num)
+        self.codebook = QuantizeEMAReset(nb_code=_C.CODEBOOK.nb_code, code_dim=_C.CODEBOOK.code_dim)
+    
     def init_batch(self, batch):
         data = batch.copy()
         # Input 1. Body pose
@@ -106,26 +79,6 @@ class Network(nn.Module):
         
         return batch
 
-    def post_processing(self, batch):
-        d_xy = batch['d_xy']
-        z = batch['z']
-        local_orient = batch['local_orient']
-        d_heading_vec = batch['d_heading_vec']
-        
-        init_xy = torch.zeros_like(batch['local_traj_tp'][:1, ..., :2])    # [1, B, 2]
-        init_heading_vec = torch.tensor([0., 1.], device=init_xy.device).expand_as(batch['local_traj_tp'][:1, ..., -2:])
-        d_xy = torch.cat([init_xy, d_xy[1:, ..., :2]], dim=0)                              # [T, B, 2]
-        d_heading_vec = torch.cat([init_heading_vec, d_heading_vec[1:, ..., -2:]], dim=0)  # [T, B, 2]
-
-        out_local_traj_tp = torch.cat([d_xy, z, local_orient, d_heading_vec], dim=-1)       # [T, B, 11]
-        out_trans_tp, out_orient_q = traj_local2global_heading(out_local_traj_tp, local_orient_type=self.local_orient_type, )
-        
-        batch['out_trans_tp'] = out_trans_tp        # GT w_transl
-        batch['out_orient_q_tp'] = out_orient_q     # w_orient_q_tp
-        out_orient_tp = transforms.quaternion_to_matrix(out_orient_q)
-        batch['out_orient_6d_tp'] = transforms.matrix_to_rotation_6d(out_orient_tp)
-        return batch
-
     def forward_smpl(self, batch):
         ## LBS (World coordinate)
         B, T = batch['body_pose'].shape[:2]
@@ -148,29 +101,49 @@ class Network(nn.Module):
         c_vertex = c_output.vertices.reshape(B, T, -1, 3)
         c_kp3d_wham = torch.matmul(self.J_regressor_wham, c_vertex)         # [B, T, 31, 3]
         c_kp3d_coco = c_kp3d_wham[..., :17, :3]
-        #c_kp3d_feet = c_kp3d_wham[..., [15, 16], :3]
 
         batch['c_root_orient'] = c_root
         batch['c_transl'] = c_transl
         batch['c_kp3d'] = c_kp3d_coco
-        #batch['c_feet'] = c_kp3d_feet
-        #batch['contact'] = contact
 
         return batch
-
+    
     def forward_model(self, batch):
+        """
+        batch : [T, B, dim]
+        """
+        batch = self.context_encoder(batch)
         batch = self.encoder(batch)
-        x_d, commit_loss, perplexity = self.codebook(batch['encoded_feat'])  # [B, dim, T]
-        batch['quantized_feat'] = x_d
+        x_quantized, commit_loss, _ = self.codebook(batch['encoded_feat'])  # [T-1, B, dim, N]
+        batch['quantized_feat'] = x_quantized
         batch['commit_loss'] = commit_loss
-        batch = self.decoder(batch)                                         # [B, dim, T]
-        batch = self.head(batch, True)
+
+        batch = self.decoder(batch)
+        return batch
+
+
+    def forward(self, batch):
+        batch = self.forward_smpl(batch)
+        batch = self.init_batch(batch)      # input_tp : [T, B, dim]
+        batch = self.forward_model(batch)
+
+        batch['w_transl_tp'] = batch['w_transl_tp'][1:]
+        batch['w_orient_q_tp'] = batch['w_orient_q_tp'][1:]
+        batch['out_orient_6d_tp'] = batch['out_orient_6d_tp'][1:]
         
         return batch
     
-    def forward(self, batch):
-        batch = self.forward_smpl(batch)
-        batch = self.init_batch(batch)
-        batch = self.forward_model(batch)
-        batch = self.post_processing(batch)
-        return batch
+    def forward_classifier(self, x_past):
+        """
+        """
+        cls_logits_softmax = self.classifier(x_past)                       # [B, N, C]
+        decode_feat = self.codebook.dequantize_logits(cls_logits_softmax)  # [B, code_dim, N]
+        decode_feat = decode_feat.permute(0, 2, 1)
+
+        x_past_embed = self.joint_embedding(x_past)
+        trans_dict = self.decoder(decode_feat, x_past_embed)      
+        x_trans_feat = trans_dict['x_trans'].reshape(-1, 1, self.hid_dim)
+        x_trans_kp3d = trans_dict['kp3d'].reshape(-1, 17, 3)
+
+        x_curr = x_past.reshape(-1, 17, 3) + x_trans_kp3d
+        return x_trans_feat, x_curr

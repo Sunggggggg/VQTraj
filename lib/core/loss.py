@@ -18,7 +18,6 @@ class TrajLoss(nn.Module):
         pred    : [T, B, 1, 3]
         gt      : [T, B, 1, 3] init frame [0,0,0]
         """
-        pred = pred - pred[:, :1]
         return self.l2_loss(pred, gt)
 
     def compute_orient_angle_loss(self, pred, gt):
@@ -58,12 +57,12 @@ class TrajLoss(nn.Module):
         loss_local_head = self.compute_local_orient_heading(pred['local_orient'])
         loss_dheading = self.compute_dheading(pred['d_heading_vec'])
 
-        loss_traj *= 100
-        loss_orient = loss_orient_q + loss_orient_6d
-        loss_orient *= 100
-        loss_commite *= 0.1
-        loss_local_head *= 10
-        loss_dheading *= 10
+        loss_traj *= 1.0
+        loss_orient = loss_orient_q # + loss_orient_6d
+        loss_orient *= 1.0
+        loss_commite *= 0.001
+        loss_local_head *= 0.1
+        loss_dheading *= 0.1
 
         loss_dict = {
             'traj' : loss_traj,

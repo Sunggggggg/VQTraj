@@ -43,13 +43,11 @@ class EvalDataset(torch.utils.data.Dataset):
         transl = self.transl[idx_list]
         betas = self.betas[idx_list]
 
-
         root_pose = torch.from_numpy(root_pose)
         root_pose = transforms.axis_angle_to_matrix(root_pose.reshape(-1, 1, 3))
 
         body_pose = torch.from_numpy(body_pose)
         body_pose = transforms.axis_angle_to_matrix(body_pose.reshape(-1, 23, 3))
-
         
         target = {'w_root_orient': root_pose,
                   'body_pose': body_pose,

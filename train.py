@@ -7,7 +7,9 @@ from configs.config import parse_args
 from lib.utils.train_utils import get_optimizer, create_logger, prepare_output_dir
 from lib.data.datasets.amass import AMASSDataset
 from lib.data.datasets.dataset_eval import EvalDataset
-from lib.models.vq_traj import Network
+#from lib.models.vq_traj import Network
+from lib.models.clip_vq_traj import Network
+#from lib.models.TransVQTraj.trans_vq_traj import TransNetwork as Network
 from lib.core.loss import TrajLoss
 from lib.core.trainer import Trainer
 
@@ -45,9 +47,9 @@ def main(cfg):
     )
     eval_dataset = EvalDataset(cfg)
     eval_dataloader = torch.utils.data.DataLoader(eval_dataset,
-        batch_size=cfg.TRAIN.BATCH_SIZE,
+        batch_size=1,
         num_workers=4,
-        shuffle=True,
+        shuffle=False,
         pin_memory=True
     )
     data_loaders = train_dataloader, eval_dataloader

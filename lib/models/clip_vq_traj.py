@@ -1,12 +1,13 @@
-import numpy as np
 import torch
 import torch.nn as nn
 from configs import constants as _C
 from lib.utils import transforms
 from lib.utils.print_utils import count_param
 from lib.utils.traj_utils import traj_global2local_heading, traj_local2global_heading
-from lib.models import Encoder, Decoder, QuantizeEMAReset, OutHead
-from smplx import SMPL
+from lib.models import build_body_model, Encoder, Decoder, QuantizeEMAReset, OutHead
+from lib.models.layers import CrossAtten
+from lib.models.MotionCLIP import get_model
+
 
 def compute_contact_label(feet, thr=1e-2, alpha=5):
     """
@@ -29,7 +30,7 @@ class Network(nn.Module):
         num_joints = 17
         # input_dict
         self.input_dict = {
-            "body_pose_6d_tp": 23*3,
+            "body_pose_6d_tp": 23*6,
             # "w_orient_6d_tp": 6,
             "w_kp3d_tp": num_joints*3,
             "w_vel_kp3d_tp": num_joints*3,
@@ -39,22 +40,21 @@ class Network(nn.Module):
         self.local_orient_type = '6d'
 
         smpl_batch_size = cfg.TRAIN.BATCH_SIZE * cfg.DATASET.SEQLEN
-        self.smpl = SMPL(_C.BMODEL.FLDR, num_betas=10, ext='pkl')
-        J_regressor_wham = np.load(_C.BMODEL.JOINTS_REGRESSOR_WHAM)
-        self.register_buffer('J_regressor_wham', torch.tensor(
-            J_regressor_wham, dtype=torch.float32))
-        
+        self.smpl = build_body_model(cfg.DEVICE, smpl_batch_size)
+        self.clip = get_model()
+        self.cross_att = CrossAtten()
+
         depth = 3
         down_t = 2
         num_tokens = 64
         #down_t = 3
         # 
-        self.encoder = Encoder(num_tokens=num_tokens, input_emb_width=input_dim, output_emb_width = 256, down_t = down_t,
+        self.encoder = Encoder(num_tokens=num_tokens, input_emb_width=input_dim, output_emb_width = 512, down_t = down_t,
                  stride_t = 2, width = 512, depth = depth, dilation_growth_rate = 3, activation='relu', norm=None)
-        self.decoder = Decoder(num_tokens=num_tokens, input_emb_width = 256, output_emb_width = 256, down_t = down_t, 
+        self.decoder = Decoder(num_tokens=num_tokens, input_emb_width = 256, output_emb_width = 512, down_t = down_t, 
                                stride_t = 2, width = 512, depth = depth, dilation_growth_rate = 3, activation='relu', norm=None)
         
-        self.codebook = QuantizeEMAReset(nb_code=512, code_dim=256)
+        self.codebook = QuantizeEMAReset(nb_code=512, code_dim=512)
         self.head = OutHead(in_dim=256, hid_dims=[256, 128], out_dim=11)
 
         print(f">> Input dimension : {input_dim}")
@@ -62,27 +62,14 @@ class Network(nn.Module):
 
     def init_batch(self, batch):
         data = batch.copy()
-        # Input 1. Body pose
         if 'body_pose' in data :
             body_pose_tp = batch['body_pose'].transpose(0, 1).contiguous()
             body_pose_6d_tp = transforms.matrix_to_rotation_6d(body_pose_tp)
-            body_pose_aa_tp = transforms.matrix_to_axis_angle(body_pose_tp)
-            batch['body_pose_aa_tp'] = body_pose_aa_tp.reshape(body_pose_aa_tp.shape[:2] + (-1,))   # [T, B, 69]
-
-        # Input 2. Keypoints (C)
-        if 'c_kp3d' in data :
-            c_kp3d = data['c_kp3d']
-            c_kp3d_tp = c_kp3d.transpose(0, 1).contiguous()
-            c_vel_kp3d_tp = (c_kp3d_tp[1:] - c_kp3d_tp[:-1])
-            c_vel_kp3d_tp = torch.cat([torch.zeros_like(c_vel_kp3d_tp[:1]), c_vel_kp3d_tp], dim=0) 
-
-            batch['c_kp3d_tp'] = c_kp3d_tp.reshape(c_kp3d_tp.shape[:2] + (-1,))                     # [T, B, 51]
-            batch['c_vel_kp3d_tp'] = c_vel_kp3d_tp.reshape(c_vel_kp3d_tp.shape[:2] + (-1,))         #  ''
-
-        # Input 3. Trans, Rotation
+            batch['body_pose_6d_tp'] = body_pose_6d_tp.reshape(body_pose_6d_tp.shape[:2] + (-1,))
+        
         if 'w_transl' in data :
-            w_orient_rotmat = data['w_root_orient']         # [B, T, 1, 3, 3]
-            w_transl = data['w_transl'].unsqueeze(-2)       # [B, T, 1, 3]
+            w_orient_rotmat = data['w_root_orient'] # [B, T, 1, 3, 3]
+            w_transl = data['w_transl']             # [B, T, 1, 3]
 
             w_orient_q = transforms.matrix_to_quaternion(w_orient_rotmat)   # [B, T, 1, 4]
             w_orient_6d = transforms.matrix_to_rotation_6d(w_orient_rotmat) # [B, T, 1, 6]
@@ -96,6 +83,15 @@ class Network(nn.Module):
             batch['w_orient_q_tp'] = w_orient_q_tp
             batch['w_transl_tp'] = w_transl_tp
             batch['local_traj_tp'] = local_traj_tp
+        
+        if 'w_kp3d' in data :
+            w_kp3d = data['w_kp3d']
+            w_kp3d_tp = w_kp3d.transpose(0, 1).contiguous()
+            w_vel_kp3d_tp = (w_kp3d_tp[1:] - w_kp3d_tp[:-1]) * 30 # FPS
+            w_vel_kp3d_tp = torch.cat([torch.zeros_like(w_vel_kp3d_tp[:1]), w_vel_kp3d_tp], dim=0)    # [B, T, J, 3]
+
+            batch['w_kp3d_tp'] = w_kp3d_tp.reshape(w_kp3d_tp.shape[:2] + (-1,))
+            batch['w_vel_kp3d_tp'] = w_vel_kp3d_tp.reshape(w_kp3d_tp.shape[:2] + (-1,))
 
         B, T = batch['body_pose'].shape[:2]
         batch['batch_size'] = B
@@ -126,43 +122,44 @@ class Network(nn.Module):
         batch['out_orient_6d_tp'] = transforms.matrix_to_rotation_6d(out_orient_tp)
         return batch
 
+    def forward_clip(self, batch):
+        batch = self.clip(batch)
+        return batch
+
     def forward_smpl(self, batch):
-        ## LBS (World coordinate)
+        ## LBS (World coordinate) input : rot_6d
         B, T = batch['body_pose'].shape[:2]
 
         rotmat = batch['body_pose'].reshape(B*T, -1, 3, 3)
+        root = batch['w_root_orient'].reshape(B*T, -1, 3, 3)
         betas = batch['betas'].reshape(B*T, 10)
 
-        w_root = batch['w_root_orient'].reshape(B*T, -1, 3, 3)
-        w_transl = batch['w_transl'].reshape(B*T, 3)
-
-        c_root = torch.zeros_like(w_root)
-        c_transl = torch.zeros_like(w_transl)
+        output = self.smpl.get_output(body_pose=rotmat,
+                             global_orient=root,
+                             betas=betas,
+                             pose2rot=False)
+        output.offset = output.offset.reshape(B, T, 3)  # 
+        output.joints = output.joints.reshape(B, T, -1, 3)
+        output.feet = output.feet.reshape(B, T, -1, 3)
         
-        #w_output = self.smpl(body_pose=rotmat, global_orient=w_root, 
-        #                     transl=w_transl, betas=betas, pose2rot=False)
-        c_output = self.smpl(body_pose=rotmat, global_orient=c_root, 
-                             transl=c_transl, betas=betas, pose2rot=False)
+        batch['w_transl'] = batch['w_transl'] - output.offset
+        batch['w_transl'] = batch['w_transl'] - batch['w_transl'][:, :1]    # [B, T, 3]
+        batch['w_transl'] = batch['w_transl'].unsqueeze(-2)
+        batch['w_kp3d'] = output.joints[..., :17, :3]                       # root align
+        batch['coco'] = batch['w_kp3d'].permute(0, 2, 3, 1)
         
-        # Return
-        c_vertex = c_output.vertices.reshape(B, T, -1, 3)
-        c_kp3d_wham = torch.matmul(self.J_regressor_wham, c_vertex)         # [B, T, 31, 3]
-        c_kp3d_coco = c_kp3d_wham[..., :17, :3]
-        #c_kp3d_feet = c_kp3d_wham[..., [15, 16], :3]
+        batch['w_feet'] = output.feet + batch['w_transl']                   # [B, T, 1, 3]
 
-        batch['c_root_orient'] = c_root
-        batch['c_transl'] = c_transl
-        batch['c_kp3d'] = c_kp3d_coco
-        #batch['c_feet'] = c_kp3d_feet
-        #batch['contact'] = contact
-
+        batch['contact'] = compute_contact_label(batch['w_feet'])
         return batch
 
     def forward_model(self, batch):
         batch = self.encoder(batch)
         x_d, commit_loss, perplexity = self.codebook(batch['encoded_feat'])  # [B, dim, T]
-        batch['quantized_feat'] = x_d
+        # batch['quantized_feat'] = x_d
         batch['commit_loss'] = commit_loss
+
+        batch['quantized_feat'] = self.cross_att(batch['z'], x_d)
         batch = self.decoder(batch)                                         # [B, dim, T]
         batch = self.head(batch, True)
         
@@ -170,6 +167,7 @@ class Network(nn.Module):
     
     def forward(self, batch):
         batch = self.forward_smpl(batch)
+        batch = self.forward_clip(batch)
         batch = self.init_batch(batch)
         batch = self.forward_model(batch)
         batch = self.post_processing(batch)

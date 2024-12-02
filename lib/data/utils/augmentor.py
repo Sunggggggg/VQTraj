@@ -202,7 +202,7 @@ class CameraAugmentor:
         tx = np.random.normal(scale=0.25) * max_d
         ty = np.random.normal(scale=0.25) * max_d
         dist = torch.tensor([tx, ty, tz]).float() 
-        T = dist - torch.matmul(R, target['transl'][0]) # c2w / target['transl'] : Global body position
+        T = dist - torch.matmul(R, target['w_transl'][0]) # c2w / target['transl'] : Global body position
         
         return R.repeat(self.l, 1, 1), T.repeat(self.l, 1)
     
@@ -255,7 +255,7 @@ class CameraAugmentor:
         target['T'] = T
         
         # Recompute the translation ()
-        transl_cam = torch.matmul(R, target['transl'].unsqueeze(-1)).squeeze(-1)
+        transl_cam = torch.matmul(R, target['w_transl'].unsqueeze(-1)).squeeze(-1)
         transl_cam = transl_cam + T
         if transl_cam[..., 2].min() < 0.5:      # If the person is too close to the camera
             transl_cam[..., 2] = transl_cam[..., 2] + (1.0 - transl_cam[..., 2].min())

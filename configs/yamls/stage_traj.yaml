@@ -1,6 +1,6 @@
 LOGDIR: ''
 DEVICE: 'cuda'
-EXP_NAME: 'train_stage1'
+EXP_NAME: 'codebook_clip'
 OUTPUT_DIR: 'experiments/'
 NUM_WORKERS: 8
 MODEL_CONFIG: 'configs/yamls/model_base.yaml'
@@ -26,3 +26,6 @@ LOSS:
   ROOT_VEL_LOSS_WEIGHT: 0.001
   LOSS_WEIGHT: 50.0
   CAMERA_LOSS_SKIP_EPOCH: 5
+
+DATASET:
+  SEQLEN: 81
