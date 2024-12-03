@@ -5,11 +5,10 @@ from configs import constants as _C
 from lib.utils import transforms
 from lib.utils.print_utils import count_param
 from lib.utils.traj_utils import traj_global2local_heading, traj_local2global_heading
-from lib.models.layers import CrossAtten
-from lib.models.MotionCLIP import get_model
 from smplx import SMPL
 from .codebook import QuantizeEMAReset
 from .GLAMR.custom_layer import TrajEncoder, TrajDecoder, ContextEncoder
+
 
 def compute_contact_label(feet, thr=1e-2, alpha=5):
     """
@@ -27,7 +26,7 @@ def compute_contact_label(feet, thr=1e-2, alpha=5):
 
 
 class Network(nn.Module):
-    def __init__(self) :
+    def __init__(self, cfg, mask=True) :
         super().__init__()
         num_joints = 17
         # input_dict
@@ -41,23 +40,40 @@ class Network(nn.Module):
 
         self.local_orient_type = '6d'
 
+        smpl_batch_size = cfg.TRAIN.BATCH_SIZE * cfg.DATASET.SEQLEN
         self.smpl = SMPL(_C.BMODEL.FLDR, num_betas=10, ext='pkl')
         J_regressor_wham = np.load(_C.BMODEL.JOINTS_REGRESSOR_WHAM)
         self.register_buffer('J_regressor_wham', torch.tensor(
             J_regressor_wham, dtype=torch.float32))
         
-
         # Model
         self.context_encoder = ContextEncoder(hid_dim=512, out_dim=512)
         self.encoder = TrajEncoder(con_dim=512, hid_dim=256, out_dim=256)
         self.codebook = QuantizeEMAReset(nb_code=512, code_dim=256)
         self.decoder = TrajDecoder(in_dim=256, hid_dim=512)
-
-        self.clip = get_model()
-        self.cross_att = CrossAtten()
-
+    
         print(f">> Input dimension : {input_dim}")
         print(f"# of weight : {count_param(self)}")
+
+        if mask :
+            self.input_dim = input_dim
+            self.mask_embedding = nn.Parameter(torch.rand(1, 1, input_dim))
+
+    def preprocessing(self, batch):
+        mask = batch['mask']    # [B, T]
+        x = batch['input_tp']
+        T, B = batch['seqlen'], batch['batch_size']
+        
+        mask = mask.transpose(0, 1).contiguous()
+
+        mask_embedding = mask.unsqueeze(-1) * self.mask_embedding       # [B, T, dim]
+        _mask = mask.unsqueeze(-1).repeat(1, 1, self.input_dim).reshape(T, B, -1)
+        _mask_embedding = mask_embedding.reshape(T, B, -1)
+        
+        x[_mask] = 0.0
+        x = x + _mask_embedding
+        batch['input_tp'] = x
+        return batch
 
     def init_batch(self, batch):
         data = batch.copy()
@@ -126,16 +142,11 @@ class Network(nn.Module):
         out_local_traj_tp = torch.cat([d_xy, z, local_orient, d_heading_vec], dim=-1)       # [T, B, 11]
         out_trans_tp, out_orient_q = traj_local2global_heading(out_local_traj_tp, local_orient_type=self.local_orient_type, )
         
-        out_orient_tp = transforms.quaternion_to_matrix(out_orient_q)
         batch['out_trans_tp'] = out_trans_tp        # GT w_transl
-        batch['out_trans'] = out_trans_tp.transpose(0, 1).contiguous()        # GT w_transl
-        
         batch['out_orient_q_tp'] = out_orient_q     # w_orient_q_tp
+        out_orient_tp = transforms.quaternion_to_matrix(out_orient_q)
         batch['out_orient_6d_tp'] = transforms.matrix_to_rotation_6d(out_orient_tp)
         batch['out_local_traj_tp'] = out_local_traj_tp
-        batch['out_orient_aa'] = transforms.quaternion_to_axis_angle(out_orient_q).transpose(0, 1).contiguous()     # w_orient_q_tp
-        batch['out_orient'] = transforms.quaternion_to_matrix(out_orient_q).transpose(0, 1).contiguous()
-
         return batch
 
     def forward_smpl(self, batch):
@@ -170,7 +181,6 @@ class Network(nn.Module):
 
     def forward_model(self, batch):
         batch = self.context_encoder(batch) # 'context' : [T, B, dim]
-        batch['context'] = batch['motion_feat']
         batch = self.encoder(batch)
         x_d, commit_loss, perplexity = self.codebook(batch['encoded_feat'])  # [B, dim, T]
         batch['quantized_feat'] = x_d
@@ -179,16 +189,9 @@ class Network(nn.Module):
         
         return batch
     
-    def forward_clip(self, batch):
-        batch = self.clip(batch)
-        return batch
-    
     def forward(self, batch):
         batch = self.forward_smpl(batch)
-        batch = self.forward_clip(batch)
         batch = self.init_batch(batch)
         batch = self.forward_model(batch)
         batch = self.post_processing(batch)
         return batch
-
-    

@@ -287,8 +287,9 @@ class ContextEncoder(nn.Module):
         smpl_num_joints = 23
         num_layers = 2
         self.input_dict = {'c_kp3d_tp': coco_num_joints*3, 
-                           'c_vel_kp3d_tp': coco_num_joints*3,
-                           'body_pose_aa_tp': smpl_num_joints*3}
+                           #'c_vel_kp3d_tp': coco_num_joints*3,
+                           #'body_pose_aa_tp': smpl_num_joints*3
+                           }
         in_dim = sum(v for v in self.input_dict.values())
         print(f">> Context Encoder in_dim : {in_dim}")
         """ Input mlp"""
@@ -324,7 +325,8 @@ class TrajEncoder(nn.Module):
         super().__init__()
         self.token_num = token_num = 3
         down_sample_rate = 2
-        self.input_dict = {'orient_q': 4, 
+        self.input_dict = {#'orient_q': 4, 
+                           'orient_aa': 3,
                            'trans': 3}
         in_dim = sum(v for v in self.input_dict.values())
 
@@ -337,7 +339,7 @@ class TrajEncoder(nn.Module):
         for i in range(1, len(layer_list)) :
             fusing_layers.append(nn.Conv1d(layer_list[i-1], layer_list[i], 3, 1, 1))
             fusing_layers.append(nn.ReLU())
-        fusing_layers.append(FCBlock(hid_dim, hid_dim*token_num))
+        fusing_layers.append(nn.Conv1d(layer_list[-1], token_num*hid_dim, 3, 1, 1))
         self.fusing = nn.Sequential(*fusing_layers)
 
         """ Conditional encoder """
@@ -364,24 +366,26 @@ class TrajEncoder(nn.Module):
         
         """ Input mlp"""
         init_heading_orient, init_heading_trans =\
-              convert_traj_world2heading(batch['orient_q_tp'], batch['trans_tp'])
-        x = torch.cat([init_heading_trans, init_heading_orient], dim=-1)    # [T, B, 3+4]
-        
-        x = self.input_embed(x)
+              convert_traj_world2heading(batch['w_orient_q_tp'], batch['w_transl_tp'])
+        init_heading_orient = transforms.quaternion_to_axis_angle(init_heading_orient)
+        x = torch.cat([init_heading_trans, init_heading_orient], dim=-1)    # [T, B, 3+3]
+        x = x.reshape(T, B, -1)
+        x = self.input_layer(x)
 
         """ Fusing mlp """
-        x = torch.cat([x, context], dim=-1) # [T, B, dim]
-        x = self.fusing(x).reshape(T, B, -1, self.token_num) # [T, B, N*dim]
+        x = torch.cat([x, context], dim=-1) # [T, B, 256+512]
+        x = x.permute(1, 2, 0)              # [B, dim, T]
+        x = self.fusing(x).reshape(B, -1, self.token_num, T) # [T, B, N*dim]
 
         """ Conditional encoder """
         encoded_feat = []
         for t in range(1, T):
-            x_past, x_curr = x[t-1], x[t]               # [B, dim, N]
-            x_in = torch.cat([x_past, x_curr], dim=1)   # [B, 2*dim, N]
-            x_enc = self.encoder(x_in)
-            encoded_feat.append(x_enc)
+            x_past, x_curr = x[...,t-1], x[...,t]               # [B, dim, N]
+            x_in = torch.cat([x_past, x_curr], dim=1)           # [B, 2*dim, N]
+            x_enc = self.encoder(x_in)                          
+            encoded_feat.append(x_enc)                          # [T-1, B, dim, 3]
         
-        batch['encoded_feat'] = torch.cat(encoded_feat, dim=0)  # [T-1, B, dim, 3]
+        batch['encoded_feat'] = torch.cat(encoded_feat, dim=-1)  # [B, dim, 3*80]
         return batch
     
 class TrajDecoder(nn.Module):
@@ -400,11 +404,10 @@ class TrajDecoder(nn.Module):
         decoder_layers = []
         decoder_layers.append(nn.Conv1d(in_dim, hid_dim, 3, 1, 1))
         decoder_layers.append(nn.ReLU())
-
-        for i in list(np.linspace(1, num_tokens, div_rate, endpoint=False, dtype=int)[::-1]):
-            decoder_layers.append(nn.Upsample(i))
-            decoder_layers.append(nn.Conv1d(hid_dim, hid_dim, 3, 1, 1))
-            decoder_layers.append(nn.ReLU())
+        
+        decoder_layers.append(nn.Upsample(1))
+        decoder_layers.append(nn.Conv1d(hid_dim, hid_dim, 3, 1, 1))
+        decoder_layers.append(nn.ReLU())
         
         for i in range(down_sample_rate):
             input_dim = hid_dim
@@ -416,35 +419,41 @@ class TrajDecoder(nn.Module):
         self.decoder = nn.Sequential(*decoder_layers)
         self.head = OutHead(hid_dim,  hid_dims=[512, 128], out_dim=11)
 
-    def rot_output(past_6d, trans_6d):
-        B = past_6d.shape[0]
-        past = transforms.rotation_6d_to_matrix(past_6d.reshape(B, 1, 6))        # [B, 1, 3, 3]
-        trans = transforms.rotation_6d_to_matrix(trans_6d.reshape(B, 1, 6))      # [B, 1, 3, 3]
+    def rot_output(self, past_6d, trans_6d):
+        t, B = past_6d.shape[:2]
+        past = transforms.rotation_6d_to_matrix(past_6d)        # [B, 1, 3, 3]
+        trans = transforms.rotation_6d_to_matrix(trans_6d)      # [B, 1, 3, 3]
         curr = torch.matmul(trans, past)
 
-        return transforms.matrix_to_rotation_6d(curr).reshape(B, 1, 6)
+        return transforms.matrix_to_rotation_6d(curr).reshape(t, B, 1, 6)
     
     def forward(self, batch):
         T = batch['seqlen']
+        B = batch['batch_size']
         x_quant = batch['quantized_feat']   # [T-1, B, dim, 3]
-        
+        x_quant = x_quant.reshape(B, -1, 3, T-1)
+
         x_dec_list = []
-        for t in range(T):
-            x_dec = self.decoder(x_quant[t])        # [B, dim, 1]
+        for t in range(T-1):
+            x_dec = self.decoder(x_quant[..., t])   # [B, dim, 1]
             x_dec_list.append(x_dec)
-        x_dec = torch.stack(x_dec_list, dim=-1)     # [B, dim, T-1]
-        out_local_traj_tp = x_dec.permute(2, 0, 1)  # [T-1, B, 11]
+        x_dec = torch.cat(x_dec_list, dim=-1)       # [B, dim, T-1]
+        x_dec = x_dec.permute(2, 0, 1)
+        out_local_traj_tp = self.head(x_dec)            # [T-1, B, 1, 11]
         
-        local_traj = batch['local_traj_tp']         # [T, B, 1, 11]
-        past_z = local_traj[1:, ..., 2:3]           # [T-1, B, 1]
-        past_local_orient = local_traj[1:, ..., 3:9]
+        local_traj_tp = batch['local_traj_tp']             # [T, B, 1, 11]
+        past_z = local_traj_tp[1:, ..., 2:3]               # [T-1, B, 1, 1]
+        past_local_orient = local_traj_tp[1:, ..., 3:9]    # [T-1, B, 1, 6]
+
+        out_local_traj_tp = torch.zeros_like(local_traj_tp[1:])
         
         out_local_traj_tp[..., 2:3] = past_z + out_local_traj_tp[..., 2:3]
         out_local_traj_tp[..., 3:9] = self.rot_output(past_local_orient, out_local_traj_tp[..., 3:9])
         
         out_trans_tp, out_orient_q = traj_local2global_heading(out_local_traj_tp, local_orient_type='6d', )
         out_local_traj = out_local_traj_tp.transpose(0, 1).contiguous()
-
+        
+        batch['out_local_traj_tp'] = out_local_traj_tp
         batch['out_trans_tp'] = out_trans_tp        # GT w_transl
         batch['out_orient_q_tp'] = out_orient_q     # w_orient_q_tp
         out_orient_tp = transforms.quaternion_to_matrix(out_orient_q)

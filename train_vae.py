@@ -2,15 +2,12 @@ import torch
 import pprint
 import random
 import numpy as np
-
+import os
 from configs.config import parse_args
 from lib.utils.train_utils import get_optimizer, create_logger, prepare_output_dir
 from lib.data.datasets.amass import AMASSDataset
 from lib.data.datasets.dataset_eval import EvalDataset
-from lib.models.vq_traj import Network
-#from lib.models.vq_traj_mask import Network
-#from lib.models.clip_vq_traj import Network
-#from lib.models.TransVQTraj.trans_vq_traj import TransNetwork as Network
+from lib.models.GLAMR.network_clip import Network
 from lib.core.loss import TrajLoss
 from lib.core.trainer import Trainer
 
@@ -56,7 +53,14 @@ def main(cfg):
     data_loaders = train_dataloader, eval_dataloader
 
     # ========= Network and Optimizer ========= #
-    network = Network(cfg).cuda()
+    network = Network().cuda()
+    if os.path.isfile(cfg.TRAIN.CHECKPOINT):
+        logger.info(f"=> loaded checkpoint '{cfg.TRAIN.CHECKPOINT}' ")
+        checkpoint = torch.load(cfg.TRAIN.CHECKPOINT)
+        ignore_keys = ['smpl.body_pose', 'smpl.betas', 'smpl.global_orient', 'smpl.J_regressor_extra', 'smpl.J_regressor_eval']
+        model_state_dict = {k: v for k, v in checkpoint['model'].items() if k not in ignore_keys}
+        network.load_state_dict(model_state_dict, strict=False)
+        
     optimizer = get_optimizer(
         cfg,
         model=network, 

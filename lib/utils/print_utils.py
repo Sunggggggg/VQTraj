@@ -7,7 +7,3 @@ def print_batch(batch):
     for k, v in batch.items() :
         if isinstance(v, torch.Tensor):
             print(k, v.shape)
-        elif isinstance(v, int) or isinstance(v, float):
-            print(k, v)
-        else: 
-            print(k, v[0])

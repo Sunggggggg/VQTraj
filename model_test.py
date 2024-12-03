@@ -7,22 +7,23 @@ from configs.config import parse_args
 from lib.utils.train_utils import prepare_batch
 from lib.utils.print_utils import count_param, print_batch
 from lib.data.datasets.dataset_eval import EvalDataset
-#from lib.models.clip_vq_traj import Network
-from lib.models.vq_traj import Network
-
+# from lib.models.clip_vq_traj import Network
+from lib.models.GLAMR.network_clip import Network
+# from lib.models.vq_traj_mask import Network
+#from lib.models.TransVQTraj.trans_vq_traj import TransNetwork
 
 def main(cfg):
     # ========= Dataloaders ========= #
     eval_dataset = EvalDataset(cfg)
     eval_dataloader = torch.utils.data.DataLoader(eval_dataset,
-        batch_size=3,
+        batch_size=5,
         num_workers=4,
         shuffle=False,
         pin_memory=True
     )
 
     # ========= Network and Optimizer ========= #
-    network = Network(cfg).cuda()
+    network = Network().cuda()
     print(count_param(network)) # 12,436,171
 
     with torch.no_grad():

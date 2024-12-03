@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, PillowWriter
 
-def traj_vis_different_view(traj, animation_path='test.gif'):
+def traj_vis_different_view(traj, color='r', animation_path='test.gif'):
     fig = plt.figure(figsize=(10, 10))
     ax1 = fig.add_subplot(121, projection='3d')
     ax2 = fig.add_subplot(122, projection='3d')
@@ -54,8 +54,8 @@ def traj_vis_different_view(traj, animation_path='test.gif'):
 
         x, y, z = joints[:, 0], joints[:, 1], joints[:, 2]
         
-        ax1.scatter(x, y, z)
-        ax2.scatter(x, y, z)
+        ax1.scatter(x, y, z, c=color)
+        ax2.scatter(x, y, z, c=color)
     
     length = traj.shape[0]
     interval = 50

@@ -5,11 +5,9 @@ from configs import constants as _C
 from lib.utils import transforms
 from lib.utils.print_utils import count_param
 from lib.utils.traj_utils import traj_global2local_heading, traj_local2global_heading
-from lib.models.layers import CrossAtten
-from lib.models.MotionCLIP import get_model
 from smplx import SMPL
-from .codebook import QuantizeEMAReset
-from .GLAMR.custom_layer import TrajEncoder, TrajDecoder, ContextEncoder
+from .traj_vae import *
+from lib.models.MotionCLIP import get_model
 
 def compute_contact_label(feet, thr=1e-2, alpha=5):
     """
@@ -27,7 +25,7 @@ def compute_contact_label(feet, thr=1e-2, alpha=5):
 
 
 class Network(nn.Module):
-    def __init__(self) :
+    def __init__(self, ) :
         super().__init__()
         num_joints = 17
         # input_dict
@@ -46,15 +44,12 @@ class Network(nn.Module):
         self.register_buffer('J_regressor_wham', torch.tensor(
             J_regressor_wham, dtype=torch.float32))
         
-
         # Model
-        self.context_encoder = ContextEncoder(hid_dim=512, out_dim=512)
-        self.encoder = TrajEncoder(con_dim=512, hid_dim=256, out_dim=256)
-        self.codebook = QuantizeEMAReset(nb_code=512, code_dim=256)
-        self.decoder = TrajDecoder(in_dim=256, hid_dim=512)
+        self.context_encoder = ContextEncoder()
+        self.data_encoder = DataEncoder()
+        self.data_decoder = DataDecoder(use_clip=True)
 
-        self.clip = get_model()
-        self.cross_att = CrossAtten()
+        self.clip_encoder = get_model()
 
         print(f">> Input dimension : {input_dim}")
         print(f"# of weight : {count_param(self)}")
@@ -79,6 +74,7 @@ class Network(nn.Module):
 
             batch['c_kp3d_tp'] = c_kp3d_tp.reshape(c_kp3d_tp.shape[:2] + (-1,))                     # [T, B, 51]
             batch['c_vel_kp3d_tp'] = c_vel_kp3d_tp.reshape(c_vel_kp3d_tp.shape[:2] + (-1,))         #  ''
+            batch['in_joint_pos_tp'] = c_kp3d_tp.reshape(c_kp3d_tp.shape[:2] + (-1,))               # [T, B, 51]
 
         # Input 3. Trans, Rotation
         if 'w_transl' in data :
@@ -94,6 +90,8 @@ class Network(nn.Module):
             local_traj_tp = traj_global2local_heading(w_transl_tp, w_orient_q_tp, local_orient_type=self.local_orient_type)  # [T, B, 1, 11]
 
             batch['w_orient_6d_tp'] = w_orient_6d_tp
+            batch['orient_q_tp'] = w_orient_q_tp
+            batch['trans_tp'] = w_transl_tp
             batch['w_orient_q_tp'] = w_orient_q_tp
             batch['w_transl_tp'] = w_transl_tp
             batch['local_traj_tp'] = local_traj_tp
@@ -105,37 +103,6 @@ class Network(nn.Module):
         input_batch = torch.cat([batch[k].reshape(T, B, -1) for k in self.input_dict], dim=-1)    # [T, B, dim]
         batch['input_tp'] = input_batch
         
-        return batch
-
-    def post_processing(self, batch):
-        d_xy = batch['d_xy']
-        z = batch['z']
-        local_orient = batch['local_orient']
-        d_heading_vec = batch['d_heading_vec']
-        
-        if 'local_traj_tp' in batch:
-            init_xy = batch['local_traj_tp'][:1, ..., :2]
-            init_heading_vec = batch['local_traj_tp'][:1, ..., -2:]
-        else :
-            init_xy = torch.zeros_like(batch['local_traj_tp'][:1, ..., :2])    # [1, B, 2]
-            init_heading_vec = torch.tensor([0., 1.], device=init_xy.device).expand_as(batch['local_traj_tp'][:1, ..., -2:])
-        
-        d_xy = torch.cat([init_xy, d_xy[1:, ..., :2]], dim=0)                              # [T, B, 2]
-        d_heading_vec = torch.cat([init_heading_vec, d_heading_vec[1:, ..., -2:]], dim=0)  # [T, B, 2]
-
-        out_local_traj_tp = torch.cat([d_xy, z, local_orient, d_heading_vec], dim=-1)       # [T, B, 11]
-        out_trans_tp, out_orient_q = traj_local2global_heading(out_local_traj_tp, local_orient_type=self.local_orient_type, )
-        
-        out_orient_tp = transforms.quaternion_to_matrix(out_orient_q)
-        batch['out_trans_tp'] = out_trans_tp        # GT w_transl
-        batch['out_trans'] = out_trans_tp.transpose(0, 1).contiguous()        # GT w_transl
-        
-        batch['out_orient_q_tp'] = out_orient_q     # w_orient_q_tp
-        batch['out_orient_6d_tp'] = transforms.matrix_to_rotation_6d(out_orient_tp)
-        batch['out_local_traj_tp'] = out_local_traj_tp
-        batch['out_orient_aa'] = transforms.quaternion_to_axis_angle(out_orient_q).transpose(0, 1).contiguous()     # w_orient_q_tp
-        batch['out_orient'] = transforms.quaternion_to_matrix(out_orient_q).transpose(0, 1).contiguous()
-
         return batch
 
     def forward_smpl(self, batch):
@@ -168,27 +135,15 @@ class Network(nn.Module):
 
         return batch
 
-    def forward_model(self, batch):
-        batch = self.context_encoder(batch) # 'context' : [T, B, dim]
-        batch['context'] = batch['motion_feat']
-        batch = self.encoder(batch)
-        x_d, commit_loss, perplexity = self.codebook(batch['encoded_feat'])  # [B, dim, T]
-        batch['quantized_feat'] = x_d
-        batch['commit_loss'] = commit_loss
-        batch = self.decoder(batch)                                         # [B, dim, T]
-        
-        return batch
-    
-    def forward_clip(self, batch):
-        batch = self.clip(batch)
-        return batch
+    def forward_model(self, data):
+        self.context_encoder(data)
+        self.data_encoder(data)
+        self.clip_encoder(data)
+        self.data_decoder(data, mode='train')
+        return data
     
     def forward(self, batch):
         batch = self.forward_smpl(batch)
-        batch = self.forward_clip(batch)
         batch = self.init_batch(batch)
         batch = self.forward_model(batch)
-        batch = self.post_processing(batch)
         return batch
-
-    

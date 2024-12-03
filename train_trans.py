@@ -7,7 +7,7 @@ from configs.config import parse_args
 from lib.utils.train_utils import get_optimizer, create_logger, prepare_output_dir
 from lib.data.datasets.amass import AMASSDataset
 from lib.data.datasets.dataset_eval import EvalDataset
-from lib.models.vq_traj import Network
+from lib.models.TransVQTraj.trans_vq_traj import TransNetwork
 #from lib.models.vq_traj_mask import Network
 #from lib.models.clip_vq_traj import Network
 #from lib.models.TransVQTraj.trans_vq_traj import TransNetwork as Network
@@ -56,7 +56,7 @@ def main(cfg):
     data_loaders = train_dataloader, eval_dataloader
 
     # ========= Network and Optimizer ========= #
-    network = Network(cfg).cuda()
+    network = TransNetwork(cfg).cuda()
     optimizer = get_optimizer(
         cfg,
         model=network, 

@@ -1,6 +1,6 @@
 LOGDIR: ''
 DEVICE: 'cuda'
-EXP_NAME: 'codebook_init_true'
+EXP_NAME: 'vae_clip'
 OUTPUT_DIR: 'experiments/'
 NUM_WORKERS: 8
 MODEL_CONFIG: 'configs/yamls/model_base.yaml'
@@ -12,8 +12,9 @@ TRAIN:
   BATCH_SIZE: 64
   END_EPOCH: 100
   STAGE: 'stage1'
-  CHECKPOINT: ''
+  #CHECKPOINT: 'experiments/vae_clip/model_best.pth.tar'
   MILESTONES: [60, 80]
+  
 
 LOSS:
   SHAPE_LOSS_WEIGHT: 0.004

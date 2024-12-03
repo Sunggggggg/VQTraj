@@ -11,10 +11,11 @@ class MotionCLIP(nn.Module):
         self.decoder = decoder
     
     def make_mask(self, batch):
-        x = batch['coco']
+        x = batch['c_kp3d'].permute(0, 2, 3, 1) # [B, T, J, 3]
         B, J, d, T = x.shape
         mask = torch.ones((B, T), dtype=bool, device=x.device)
         y = torch.ones((B), dtype=int, device=x.device)
+        batch['coco']=x
         batch['y'] = y
         batch['mask'] = mask
         return batch

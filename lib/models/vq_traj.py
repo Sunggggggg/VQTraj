@@ -5,9 +5,10 @@ from configs import constants as _C
 from lib.utils import transforms
 from lib.utils.print_utils import count_param
 from lib.utils.traj_utils import traj_global2local_heading, traj_local2global_heading
-from lib.models import Encoder, Decoder, QuantizeEMAReset, OutHead
-from lib.models.layers import ContextEncoder
 from smplx import SMPL
+from .codebook import QuantizeEMAReset
+from .GLAMR.custom_layer import TrajEncoder, TrajDecoder, ContextEncoder
+
 
 def compute_contact_label(feet, thr=1e-2, alpha=5):
     """
@@ -25,7 +26,7 @@ def compute_contact_label(feet, thr=1e-2, alpha=5):
 
 
 class Network(nn.Module):
-    def __init__(self, cfg) :
+    def __init__(self, ) :
         super().__init__()
         num_joints = 17
         # input_dict
@@ -39,26 +40,17 @@ class Network(nn.Module):
 
         self.local_orient_type = '6d'
 
-        smpl_batch_size = cfg.TRAIN.BATCH_SIZE * cfg.DATASET.SEQLEN
         self.smpl = SMPL(_C.BMODEL.FLDR, num_betas=10, ext='pkl')
         J_regressor_wham = np.load(_C.BMODEL.JOINTS_REGRESSOR_WHAM)
         self.register_buffer('J_regressor_wham', torch.tensor(
             J_regressor_wham, dtype=torch.float32))
         
-        depth = 3
-        down_t = 2
-        num_tokens = 64
-        #down_t = 3
-        # 
+        # Model
         self.context_encoder = ContextEncoder(hid_dim=512, out_dim=512)
-        self.encoder = Encoder(num_tokens=num_tokens, input_emb_width=input_dim, output_emb_width = 256, down_t = down_t,
-                 stride_t = 2, width = 512, depth = depth, dilation_growth_rate = 3, activation='relu', norm=None)
-        self.decoder = Decoder(num_tokens=num_tokens, input_emb_width = 256, output_emb_width = 256, down_t = down_t, 
-                               stride_t = 2, width = 512, depth = depth, dilation_growth_rate = 3, activation='relu', norm=None)
-        
+        self.encoder = TrajEncoder(con_dim=512, hid_dim=256, out_dim=256)
         self.codebook = QuantizeEMAReset(nb_code=512, code_dim=256)
-        self.head = OutHead(in_dim=256, hid_dims=[256, 128], out_dim=11)
-
+        self.decoder = TrajDecoder(in_dim=256, hid_dim=512)
+    
         print(f">> Input dimension : {input_dim}")
         print(f"# of weight : {count_param(self)}")
 
@@ -69,6 +61,8 @@ class Network(nn.Module):
             body_pose_tp = batch['body_pose'].transpose(0, 1).contiguous()
             body_pose_6d_tp = transforms.matrix_to_rotation_6d(body_pose_tp)
             body_pose_aa_tp = transforms.matrix_to_axis_angle(body_pose_tp)
+
+            batch['body_pose_6d_tp'] = body_pose_6d_tp.reshape(body_pose_6d_tp.shape[:2] + (-1,))   # [T, B, 69]
             batch['body_pose_aa_tp'] = body_pose_aa_tp.reshape(body_pose_aa_tp.shape[:2] + (-1,))   # [T, B, 69]
 
         # Input 2. Keypoints (C)
@@ -127,10 +121,15 @@ class Network(nn.Module):
         out_local_traj_tp = torch.cat([d_xy, z, local_orient, d_heading_vec], dim=-1)       # [T, B, 11]
         out_trans_tp, out_orient_q = traj_local2global_heading(out_local_traj_tp, local_orient_type=self.local_orient_type, )
         
-        batch['out_trans_tp'] = out_trans_tp        # GT w_transl
-        batch['out_orient_q_tp'] = out_orient_q     # w_orient_q_tp
         out_orient_tp = transforms.quaternion_to_matrix(out_orient_q)
+        batch['out_trans_tp'] = out_trans_tp        # GT w_transl
+        batch['out_trans'] = out_trans_tp.transpose(0, 1).contiguous()        # GT w_transl
+        
+        batch['out_orient_q_tp'] = out_orient_q     # w_orient_q_tp
         batch['out_orient_6d_tp'] = transforms.matrix_to_rotation_6d(out_orient_tp)
+        batch['out_local_traj_tp'] = out_local_traj_tp
+        batch['out_orient_aa'] = transforms.quaternion_to_axis_angle(out_orient_q).transpose(0, 1).contiguous()     # w_orient_q_tp
+        batch['out_orient'] = transforms.quaternion_to_matrix(out_orient_q).transpose(0, 1).contiguous()
         return batch
 
     def forward_smpl(self, batch):
@@ -170,7 +169,6 @@ class Network(nn.Module):
         batch['quantized_feat'] = x_d
         batch['commit_loss'] = commit_loss
         batch = self.decoder(batch)                                         # [B, dim, T]
-        batch = self.head(batch, True)
         
         return batch
     

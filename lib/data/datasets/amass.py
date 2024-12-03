@@ -42,7 +42,7 @@ class AMASSDataset(BaseDataset):
         """
         visble = True, 
         """
-        frame_mask = np.random.rand(target['body_pose'].shape[0]).astype(np.float32) < 0.03 # [T]
+        frame_mask = np.random.rand(target['body_pose'].shape[0]).astype(np.float32) > 0.03 # [T]
         target['mask'] = frame_mask
         return target
 

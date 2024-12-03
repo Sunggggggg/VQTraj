@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 
 def batch_to(dst, *args):
