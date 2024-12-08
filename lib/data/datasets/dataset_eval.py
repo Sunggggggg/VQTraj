@@ -21,7 +21,7 @@ def create_chunks(n, chunk_size=82):
 class EvalDataset(torch.utils.data.Dataset):
     def __init__(self, cfg):
         super(EvalDataset, self).__init__()
-        eval_label = '/mnt2/SKY/WHAM/dataset/trans_data/KIT_12_RightTurn10_poses.pt'
+        eval_label = '/mnt2/SKY/WHAM/dataset/trans_data/KIT_576_MarcusS_AdrianM05_poses.pt'
         labels = joblib.load(eval_label)
 
         self.root_pose = labels['root_pose']

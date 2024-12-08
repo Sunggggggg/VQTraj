@@ -33,14 +33,15 @@ def main(cfg):
     n_frames = 81
 
     # ========= Network and Optimizer ========= #
-    #from lib.models.GLAMR.network import Network
-    from lib.models.GLAMR.network_clip import Network
+    from lib.models.GLAMR.network import Network
+    #from lib.models.GLAMR.network_clip import Network
+    from lib.models.HuMoR.network import Network
+
     network = Network().cuda()
-    CHECKPOINT = '/mnt2/SKY/VQTraj/experiments/vae_clip/checkpoint.pth.tar'
+    CHECKPOINT = '/mnt2/SKY/VQTraj/experiments/vae_trans/model_best.pth.tar'
     checkpoint = torch.load(CHECKPOINT)
     model_state_dict = {k: v for k, v in checkpoint['model'].items()}
     network.load_state_dict(model_state_dict, strict=False)
-    smpl = build_body_model('cuda', n_frames)
     
     pred_traj_list = []
     target_traj_list = []
@@ -49,22 +50,19 @@ def main(cfg):
             batch = prepare_batch(batch)
             pred = network(batch)
             
-            pred_traj = pred['out_trans_tp'][:, 0].detach().cpu().numpy()
+            pred_traj = pred['out_trans_tp'][:, 0].detach().cpu().numpy() 
             target_traj = pred['w_transl_tp'][:, 0].detach().cpu().numpy() 
-
-            pred_traj = pred_traj - pred_traj[:1]
-            target_traj = target_traj - target_traj[:1]
 
             print("Traj`s shape : ", pred_traj.shape)
             pred_traj_list.append(pred_traj)
             target_traj_list.append(target_traj)
 
             break
+
     
     pred_traj = np.concatenate(pred_traj_list)
     target_traj = np.concatenate(target_traj_list)
-    print(pred_traj.shape)
-    traj_vis_different_traj(pred_traj, target_traj)
+    traj_vis_different_traj(pred_traj, target_traj, azim=-90, elev=90)
     
     plt.close()
 

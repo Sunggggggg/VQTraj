@@ -58,9 +58,10 @@ def main(cfg):
 
     # ========= Network and Optimizer ========= #
     #from lib.models.GLAMR.network import Network
-    from lib.models.GLAMR.network_clip import Network
+    #   from lib.models.GLAMR.network_clip import Network
+    from lib.models.HuMoR.network import Network
     network = Network().cuda()
-    CHECKPOINT = '/mnt2/SKY/VQTraj/experiments/vae_clip/checkpoint.pth.tar'
+    CHECKPOINT = '/mnt2/SKY/VQTraj/experiments/vae_trans/model_best.pth.tar'
     checkpoint = torch.load(CHECKPOINT)
     model_state_dict = {k: v for k, v in checkpoint['model'].items()}
     network.load_state_dict(model_state_dict, strict=False)
@@ -85,7 +86,7 @@ def main(cfg):
 
     renderer = Renderer(width, height, focal_length, 'cuda', smpl.faces)
     renderer.set_ground(scale, cx.item(), cz.item())
-    global_R, global_T, global_lights = get_global_cameras(verts_glob, 'cuda')
+    global_R, global_T, global_lights = get_global_cameras(verts_glob, 'cuda', position=(5, 5, 0))
     default_R, default_T = torch.eye(3), torch.zeros(3)
 
     writer = imageio.get_writer(
@@ -104,6 +105,7 @@ def main(cfg):
     }
     # run rendering
     for frame_i in range(len(verts_glob)):
+        if frame_i == 300 : break
         verts = verts_glob[[frame_i]].to('cuda')
         pred_verts = pred_verts_glob[[frame_i]].to('cuda')
         faces = renderer.faces.clone().squeeze(0).to('cuda')

@@ -158,7 +158,6 @@ class Trainer():
             self.train_global_step += 1
             bar.suffix = summary_string
             bar.next(1)
-                
             if torch.isnan(total_loss):
                 exit('Nan value in loss, exiting!...')
             # =======>

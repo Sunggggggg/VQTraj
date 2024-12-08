@@ -12,6 +12,7 @@ from configs import constants as _C
 class TrajLoss(nn.Module):
     def __init__(self) :
         super().__init__()
+        self.l1_loss = nn.L1Loss()
         self.l2_loss = nn.MSELoss()
 
     def compute_trans_mse(self, pred, gt):
@@ -57,11 +58,19 @@ class TrajLoss(nn.Module):
         return mse
 
     def compute_vae_z_kld(self, data):
-        kld = data['q_z_dist'].kl(data['p_z_dist'])
-        kld = kld.sum(-1)
-        kld = kld.clamp_min_(0.0).mean()
+        if isinstance(data['p_z_dist'], list):
+            kld = sum([q_z_dist.kl(p_z_dist) for p_z_dist, q_z_dist in zip(data['p_z_dist'], data['q_z_dist']) ])
+            kld = kld.sum(-1)
+            kld = kld.clamp_min_(0.0).mean()
+        else :
+            kld = data['q_z_dist'].kl(data['p_z_dist'])
+            kld = kld.sum(-1)
+            kld = kld.clamp_min_(0.0).mean()
 
         return kld
+    
+    def compute_foot_contact(self, pred, gt):
+        return self.l2_loss(pred, gt)
 
     def forward(self, pred, gt):
         loss = 0.0
@@ -78,13 +87,19 @@ class TrajLoss(nn.Module):
         else :
             loss_kl = 0.
         
+        if 'contact_tp' in pred :
+            loss_sliding = self.compute_foot_contact(pred['pred_contact_tp'], pred['contact_tp'])
+        else :
+            loss_sliding = 0.
+
         # loss_orient_6d = self.compute_orient_6d_loss(pred['out_orient_6d_tp'], gt['w_orient_6d_tp'])
         loss_local_head = self.compute_local_orient_heading(pred['out_local_traj_tp'])
         loss_dheading = self.compute_dheading(pred['out_local_traj_tp'])
 
         loss_traj *= 1.0
         loss_orient = loss_orient_q # + loss_orient_6d
-        loss_orient *= 1.0 
+        loss_orient *= 1.0
+        loss_sliding *= 0.1
         loss_local_head *= 0.1
         loss_dheading *= 0.1
 
@@ -92,6 +107,7 @@ class TrajLoss(nn.Module):
             'traj' : loss_traj,
             'orient': loss_orient,
             'kl': loss_kl,
+            'slide': loss_sliding,
             # 'local_head': loss_local_head,
             'dheading': loss_dheading,
         }

@@ -18,13 +18,13 @@ class BaseDataset(torch.utils.data.Dataset):
         self.n_frames = cfg.DATASET.SEQLEN + 1
 
     def prepare_video_batch(self):
-        r = self.epoch % 4
+        d = 2
+        r = self.epoch % d
 
         self.video_indices = []
         vid_name = self.labels['vid']
         if isinstance(vid_name, torch.Tensor): vid_name = vid_name.numpy()
-        video_names_unique, group = np.unique(
-            vid_name, return_index=True)
+        video_names_unique, group = np.unique(vid_name, return_index=True)
         perm = np.argsort(group)
         group_perm = group[perm]
         indices = np.split(
@@ -34,9 +34,9 @@ class BaseDataset(torch.utils.data.Dataset):
             indexes = indices[idx]
             if indexes.shape[0] < self.n_frames: continue
             chunks = view_as_windows(
-                indexes, (self.n_frames), step=self.n_frames // 4
+                indexes, (self.n_frames), step=self.n_frames // d
             )
-            start_finish = chunks[r::4, (0, -1)].tolist()
+            start_finish = chunks[r::d, (0, -1)].tolist()
             self.video_indices += start_finish
 
         self.epoch += 1

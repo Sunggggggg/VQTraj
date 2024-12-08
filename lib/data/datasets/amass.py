@@ -30,9 +30,9 @@ class AMASSDataset(BaseDataset):
         
         self.prepare_video_batch()
 
-        #self.img_w, self.img_h = 1000, 1000
-        #self.get_naive_intrinsics((self.img_w, self.img_h))
-        #self.CameraAugmentor = CameraAugmentor(cfg.DATASET.SEQLEN + 1, self.img_w, self.img_h, self.focal_length)
+        self.img_w, self.img_h = 1000, 1000
+        self.get_naive_intrinsics((self.img_w, self.img_h))
+        self.CameraAugmentor = CameraAugmentor(cfg.DATASET.SEQLEN, self.img_w, self.img_h, self.focal_length)
     
     @property
     def __name__(self, ):
@@ -75,7 +75,7 @@ class AMASSDataset(BaseDataset):
         target = self.SMPLAugmentor(target)
 
         # Augmentation 2. Camera augmentation
-        # target = self.CameraAugmentor(target)
+        target = self.CameraAugmentor(target)
         
         return target
 

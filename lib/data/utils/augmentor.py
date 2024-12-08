@@ -183,7 +183,9 @@ class CameraAugmentor:
             R = self.create_rotation_move(R)
             T = self.create_translation_move(T)
         
-        return self.apply(target, R, T)
+        target['R'] = R
+        target['T'] = T
+        return target
         
     def create_camera(self, target):
         """Create the initial frame camera pose"""
@@ -249,33 +251,3 @@ class CameraAugmentor:
         for i in range(dim):
             output[:, i] = np.interp(linspace[i], np.array([0., 1.,]), data[:, i])
         return output
-    
-    def apply(self, target, R, T):
-        target['R'] = R
-        target['T'] = T
-        
-        # Recompute the translation ()
-        transl_cam = torch.matmul(R, target['w_transl'].unsqueeze(-1)).squeeze(-1)
-        transl_cam = transl_cam + T
-        if transl_cam[..., 2].min() < 0.5:      # If the person is too close to the camera
-            transl_cam[..., 2] = transl_cam[..., 2] + (1.0 - transl_cam[..., 2].min())
-        
-        # If the subject is away from the field of view, put the camera behind
-        fov = torch.div(transl_cam[..., :2], transl_cam[..., 2:]).abs()
-        if fov.max() > self.fov_tol:
-            t_max = transl_cam[fov.max(1)[0].max(0)[1].item()]
-            z_trg = t_max[:2].abs().max(0)[0] / self.fov_tol
-            pad = z_trg - t_max[2]
-            transl_cam[..., 2] = transl_cam[..., 2] + pad
-        
-        target['c_transl'] = transl_cam
-        
-        # Transform world coordinate to camera coordinate
-        target['c_root_orient'] = R @ target['w_root_orient']
-        
-        # Compute angular velocity
-        cam_angvel = transforms.matrix_to_rotation_6d(R[:-1] @ R[1:].transpose(-1, -2))
-        cam_angvel = cam_angvel - torch.tensor([[1, 0, 0, 0, 1, 0]]).to(cam_angvel)
-        target['cam_angvel'] = cam_angvel * 3e1 
-        
-        return target

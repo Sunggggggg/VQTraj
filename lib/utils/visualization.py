@@ -63,30 +63,30 @@ def traj_vis_different_view(traj, color='r', animation_path='test.gif'):
     ani.save(animation_path, writer=PillowWriter(fps=20))
 
 
-def traj_vis_different_traj(traj1, traj2, animation_path='test.gif'):
+def traj_vis_different_traj(traj1, traj2, azim=-45, elev=45, animation_path='test.gif'):
     fig = plt.figure(figsize=(10, 10))
     ax1 = fig.add_subplot(111, projection='3d')
     
     def init():    
-        ax1.set_xlim(-1, 1)
-        ax1.set_ylim(-1, 1)
-        ax1.set_zlim(-1, 1)
+        ax1.set_xlim(-2, 2)
+        ax1.set_ylim(-2, 2)
+        ax1.set_zlim(-2, 2)
         ax1.set_xlabel('X')
         ax1.set_ylabel('Y')
         ax1.set_zlabel('Z')
 
-        ax1.view_init(azim=-45, elev=45)
+        ax1.view_init(azim=-azim, elev=elev)
     
     def update(frame):
         # ax1.clear()
-        ax1.set_xlim(-1, 1)
-        ax1.set_ylim(-1, 1)
-        ax1.set_zlim(-1, 1)
+        ax1.set_xlim(-2, 2)
+        ax1.set_ylim(-2, 2)
+        ax1.set_zlim(-2, 2)
         ax1.set_xlabel('X')
         ax1.set_ylabel('Y')
         ax1.set_zlabel('Z')
 
-        ax1.view_init(azim=-45, elev=45)
+        ax1.view_init(azim=-azim, elev=elev)
         ax1.dist = 7.5
 
         # 현재 프레임의 18개 관절 위치 데이터

@@ -7,7 +7,6 @@ from configs.config import parse_args
 from lib.utils.train_utils import get_optimizer, create_logger, prepare_output_dir
 from lib.data.datasets.amass import AMASSDataset
 from lib.data.datasets.dataset_eval import EvalDataset
-from lib.models.GLAMR.network_clip import Network
 from lib.core.loss import TrajLoss
 from lib.core.trainer import Trainer
 
@@ -53,7 +52,13 @@ def main(cfg):
     data_loaders = train_dataloader, eval_dataloader
 
     # ========= Network and Optimizer ========= #
-    network = Network().cuda()
+    from lib.models.MHT.network import Network
+    network = Network(stage='stage1').cuda()
+
+    #from lib.models.GLAMR.network import Network
+    #network = Network().cuda()
+
+
     if os.path.isfile(cfg.TRAIN.CHECKPOINT):
         logger.info(f"=> loaded checkpoint '{cfg.TRAIN.CHECKPOINT}' ")
         checkpoint = torch.load(cfg.TRAIN.CHECKPOINT)
